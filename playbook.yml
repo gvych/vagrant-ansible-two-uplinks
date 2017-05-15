@@ -1,0 +1,30 @@
+---
+- hosts: all
+  become: yes
+  tasks:
+    - sysctl:
+        name: net.ipv4.ip_forward
+        value: 1
+        sysctl_set: yes
+        state: present
+        reload: yes
+    - blockinfile:
+        path: /etc/network/interfaces
+        insertafter: "iface eth0 inet dhcp"
+        block: "post-up route del default dev $IFACE || true"
+    - copy:
+        dest: /etc/network/if-up.d/script
+        mode: 0755
+        content: |
+          #!/bin/bash
+          ip route add default scope global nexthop via $(dhcpcd -T eth2|awk -F\' '/GATEWAY=/{print $2}') dev eth2 weight 1 \
+                                            nexthop via $(dhcpcd -T eth3|awk -F\' '/GATEWAY=/{print $2}') dev eth3 weight 1
+    - package:
+        name: "{{ item }}"
+        state: present
+      with_items:
+        - iptables-persistent
+        - dhcpcd
+    - shell: "iptables -t nat -A POSTROUTING -o {{ item }} -j MASQUERADE"
+      with_items: [eth2,eth3]
+    - shell: "service  iptables-persistent save;ifdown --exclude=lo -a && ifup --exclude=lo -a"
